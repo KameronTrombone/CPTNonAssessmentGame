@@ -1,40 +1,49 @@
-
+# Base stats
 health = 10
 strength = 6
 dexterity = 6
 intelligence = 6
-proffesions = [fighter, ranger, wizard]
-races = [human, orc, elf, gnome]
+
+professions = ["fighter", "ranger", "wizard"]
+races = ["human", "orc", "elf", "gnome"]
 
 def main():
-    proffesion = proffesions[int(input("What class would you like to be ? Type '0' for fighter, '1' for ranger, or '2', for wizard" ))]
-    if proffesion == fighter:
-        "blah blah blah"
-    elif proffesion == ranger:
-        "blah blah blah"
-    elif proffesion == wizard:
-        "blah blah blah"
+    global health, strength, dexterity, intelligence
+    
+    # Choose profession
+    profession = professions[int(input("Choose class: 0=fighter, 1=ranger, 2=wizard: "))]
+    if profession == "fighter":
+        print("You are a strong fighter, ready for battle!")
+    elif profession == "ranger":
+        print("You are a nimble ranger, master of the wilds!")
+    elif profession == "wizard":
+        print("You are a wise wizard, wielder of arcane power!")
     else:
-        proffesion = fighter
-        print('you are stupid, be a fighter')
-   
-    race = races[int(input("What race would you like to be ? Type '0' for human, '1' for orc, '2' for elf, or '3' for gnome"))]
-    if race == human:
-        strength += 0
-        dexterity -= 0
-        intelligence -= 0
-    elif race == orc:
+        profession = "fighter"
+        print("Invalid choice. Defaulting to fighter.")
+    
+    # Choose race
+    race = races[int(input("Choose race: 0=human, 1=orc, 2=elf, 3=gnome: "))]
+    if race == "human":
+        pass  # no stat changes
+    elif race == "orc":
         strength += 2
         dexterity -= 1
         intelligence -= 1
-    elif race == elf:
+    elif race == "elf":
         strength -= 2
         dexterity += 1
         intelligence += 1
-    elif race == gnome:
-        strength -=1
-        dexterity += 0
+    elif race == "gnome":
+        strength -= 1
         intelligence += 2
         health -= 1
-    print(proffesion, race) 
+    
+    # Final character summary
+    print("\n--- Character Created ---")
+    print(f"Profession: {profession}")
+    print(f"Race: {race}")
+    print(f"Stats -> Health: {health}, Strength: {strength}, Dexterity: {dexterity}, Intelligence: {intelligence}")
 
+if __name__ == "__main__":
+    main()
