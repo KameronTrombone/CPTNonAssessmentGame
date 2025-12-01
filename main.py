@@ -1,4 +1,3 @@
-# Base stats
 health = 10
 strength = 6
 dexterity = 6
@@ -10,7 +9,6 @@ races = ["human", "orc", "elf", "gnome"]
 def main():
     global health, strength, dexterity, intelligence
     
-    # Choose profession
     profession = professions[int(input("Choose class: 0=fighter, 1=ranger, 2=wizard: "))]
     if profession == "fighter":
         print("You are a strong fighter, ready for battle!")
@@ -21,8 +19,7 @@ def main():
     else:
         profession = "fighter"
         print("Invalid choice. Defaulting to fighter.")
-    
-    # Choose race
+        
     race = races[int(input("Choose race: 0=human, 1=orc, 2=elf, 3=gnome: "))]
     if race == "human":
         pass  # no stat changes
@@ -38,8 +35,7 @@ def main():
         strength -= 1
         intelligence += 2
         health -= 1
-    
-    # Final character summary
+        
     print("\n--- Character Created ---")
     print(f"Profession: {profession}")
     print(f"Race: {race}")
