@@ -1,19 +1,6 @@
 # CPTNonAssessmentGame
 
 
-Lucas has signed in
+#https://rogueliketutorials.com/tutorials/tcod/v2/part-2/
 
-
-Sword
-      /| ________________
-O|===|* >________________>
-      \|
-
-***************************************
-!                                     !
-!                                     !
-!                                     !
-!                                     !
-!                                     !
-!                                     !
-***************************************
+Tutorial
