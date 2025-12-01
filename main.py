@@ -19,7 +19,7 @@ def main():
     else:
         profession = "fighter"
         print("Invalid choice. Defaulting to fighter.")
-        
+
     race = races[int(input("Choose race: 0=human, 1=orc, 2=elf, 3=gnome: "))]
     if race == "human":
         pass  # no stat changes
@@ -43,3 +43,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
