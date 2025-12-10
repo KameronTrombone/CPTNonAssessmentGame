@@ -457,14 +457,13 @@ class Game:
 						e.y = ny
 
 	def game_over(self, msg):
-		self.draw()
-		self.stdscr.addstr(MAP_H//2, MAP_W//2 - len(msg)//2, msg)
-		self.stdscr.addstr(MAP_H//2+1, MAP_W//2 - 8, "Press any key to quit.")
-		self.stdscr.refresh()
-		self.stdscr.getch()
-		curses.endwin()
-		print(msg)
-		sys.exit(0)
+	    # show the same big popup style as floor entry
+	    self.popup_level(msg, seconds=1.8)
+	    self.popup_level("Game Over", seconds=1.5)
+
+	    curses.endwin()
+	    print(msg)
+	    sys.exit(0)
 
 	def level_up(self):
 		self.level += 1
