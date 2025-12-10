@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-# rogue_ascii_v2.py
-# Upgraded ASCII roguelike — colours, larger
-# UI, simple inventory, weapon equip, powerups.
-# Save & run with: python3 rogue_ascii_v2.py
+# rogue_ascii_v2_upgraded.py
+# Based on your rogue_ascii_v2.py — kept core structure but added:
+# - enemy spawn scaling by level (fewer early, more later)
+# - interactive inventory (Candy Box 2 style) with equip/use/drop/examine
+# - improved combat with hit chance, crits, damage display in bottom bar
+# - level popups when descending floors
+# Save & run with: python3 rogue_ascii_v2_upgraded.py
 # On Windows: pip install windows-curses
 
 import curses
 import random
 import sys
+import time
 
 MAP_W = 100
 MAP_H = 30
 MAX_ROOMS = 14
 ROOM_MIN = 5
 ROOM_MAX = 12
-MAX_ENEMIES = 16
+MAX_ENEMIES = 24
+
+# Gameplay tuning
+BASE_ENEMIES = 2
+ENEMIES_PER_LEVEL = 2
 
 # Tiles / symbols
 WALL = '#'
@@ -27,7 +35,7 @@ SWORD = '/'
 POWER_SYMBOLS = {'atk': '+', 'hp': 'h', 'def': 'd', 'spd': 's'}
 UNKNOWN = ' '
 
-# Colour pair IDs (will be initialized in init_colors)
+# Colour pair IDs
 CP_PLAYER = 1
 CP_WALL = 2
 CP_FLOOR = 3
@@ -37,6 +45,7 @@ CP_STAIRS = 6
 CP_SWORD = 7
 CP_POWER = 8
 CP_TEXT = 9
+CP_POPUP = 10
 
 class Rect:
 	def __init__(self, x, y, w, h):
@@ -56,8 +65,8 @@ class Entity:
 		self.y = y
 		self.ch = ch
 		self.hp = hp
+		self.max_hp = hp
 		self.name = name or ch
-		# combat stats (for items / actors)
 		self.atk = 1
 		self.defn = 0
 
@@ -66,7 +75,7 @@ class Item:
 		self.x = x
 		self.y = y
 		self.ch = ch
-		self.kind = kind  # 'sword','potion','power'
+		self.kind = kind
 		self.name = name
 		self.color_pair = color_pair
 		self.bonus = bonus
@@ -82,13 +91,15 @@ class Game:
 		self.items = []
 		self.message = "Welcome — reach '>' to escape. Press 'i' for inventory."
 		self.level = 1
+		# fixed seed keeps layout same each run — remove if you want random each play
+		random.seed(12345)
 		self.make_map()
 		self.visible = [[False]*MAP_W for _ in range(MAP_H)]
 		self.explored = [[False]*MAP_W for _ in range(MAP_H)]
-		self.fov_radius = 12
+		self.fov_radius = 10
 		self.inventory = []
-		self.equipped = None  # index into inventory or None
-		self.turn_delay = 0.05
+		self.equipped = None
+		self.last_combat = ''
 
 	def create_room(self, room):
 		for y in range(room.y1, room.y2):
@@ -107,7 +118,7 @@ class Game:
 				self.map[y][x] = FLOOR
 
 	def make_map(self):
-		# procedural rooms
+		self.rooms = []
 		for _ in range(MAX_ROOMS):
 			w = random.randint(ROOM_MIN, ROOM_MAX)
 			h = random.randint(ROOM_MIN, ROOM_MAX)
@@ -119,7 +130,7 @@ class Game:
 			self.create_room(new_room)
 			(cx,cy) = new_room.center()
 			if not self.rooms:
-				self.player = Entity(cx, cy, PLAYER_CHAR, hp=20, name='You')
+				self.player = Entity(cx, cy, PLAYER_CHAR, hp=24, name='You')
 				self.player.atk = 2
 			else:
 				(prevx, prevy) = self.rooms[-1].center()
@@ -131,40 +142,39 @@ class Game:
 					self.create_h_tunnel(prevx, cx, cy)
 			self.rooms.append(new_room)
 
-		# place stairs in last room
+		# place stairs
 		last_center = self.rooms[-1].center()
 		self.stairs = Entity(last_center[0], last_center[1], STAIRS, name='Stairs')
-		# spawn enemies and items
-		for _ in range(MAX_ENEMIES):
+
+		# spawn enemies scaled by level
+		enemy_count = min(MAX_ENEMIES, BASE_ENEMIES + (self.level-1)*ENEMIES_PER_LEVEL)
+		for _ in range(enemy_count):
 			room = random.choice(self.rooms)
 			x = random.randint(room.x1+1, room.x2-1)
 			y = random.randint(room.y1+1, room.y2-1)
 			if self.is_blocked(x,y):
 				continue
-			g = Entity(x,y,ENEMY_CHAR,hp=4, name='Goblin')
-			g.atk = 1 + random.randint(0,2)
-			g.defn = random.randint(0,1)
+			hp = 3 + (self.level//2)
+			g = Entity(x,y,ENEMY_CHAR,hp=hp, name='Goblin')
+			g.atk = 1 + random.randint(0,1) + (self.level//3)
+			g.defn = random.randint(0,1) + (self.level//4)
+			g.max_hp = hp
 			self.enemies.append(g)
 
-		# items: 1 standout sword, some potions, and powerups spread evenly
-		# standout sword
+		# items: one standout sword, potions and powerups
 		room = random.choice(self.rooms)
 		x = random.randint(room.x1+1, room.x2-1)
 		y = random.randint(room.y1+1, room.y2-1)
-		self.items.append(Item(x, y, SWORD, 'sword', 'Rusty Sword',
-							color_pair=CP_SWORD, bonus=3))
+		self.items.append(Item(x,y,SWORD,'sword','Rusty Sword',color_pair=CP_SWORD,bonus=3))
 
-
-		# potions
-		for _ in range(6):
+		for _ in range(4):
 			room = random.choice(self.rooms)
 			x = random.randint(room.x1+1, room.x2-1)
 			y = random.randint(room.y1+1, room.y2-1)
 			if self.is_blocked(x,y):
 				continue
-			self.items.append(Item(x,y,POTION,'potion','Healing Potion',color_pair=CP_POTION,bonus=5))
+			self.items.append(Item(x,y,POTION,'potion','Healing Potion',color_pair=CP_POTION,bonus=6))
 
-		# powerups: attack, hp, defense, speed — spread
 		kinds = ['atk','hp','def','spd']
 		for kind in kinds:
 			room = random.choice(self.rooms)
@@ -172,12 +182,7 @@ class Game:
 			y = random.randint(room.y1+1, room.y2-1)
 			if self.is_blocked(x,y):
 				continue
-			name = {
-				'atk':'Bracer of Strength',
-				'hp':'Heartstone',
-				'def':'Shield Emblem',
-				'spd':'Wind Talisman'
-			}[kind]
+			name = {'atk':'Bracer of Strength','hp':'Heartstone','def':'Shield Emblem','spd':'Wind Talisman'}[kind]
 			sym = POWER_SYMBOLS[kind]
 			self.items.append(Item(x,y,sym,'power',name,color_pair=CP_POWER,bonus=1))
 
@@ -191,32 +196,31 @@ class Game:
 				return True
 		for it in self.items:
 			if it.x == x and it.y == y and it.kind == 'sword':
-				# swords block for placement safety
 				return True
 		return False
 
 	def recompute_fov(self):
 		self.visible = [[False]*MAP_W for _ in range(MAP_H)]
-		for dy in range(-self.fov_radius, self.fov_radius+1):
-			for dx in range(-self.fov_radius, self.fov_radius+1):
+		for dy in range(-self.fov_radius,self.fov_radius+1):
+			for dx in range(-self.fov_radius,self.fov_radius+1):
 				x = self.player.x + dx
 				y = self.player.y + dy
 				if 0 <= x < MAP_W and 0 <= y < MAP_H:
 					if dx*dx + dy*dy <= self.fov_radius*self.fov_radius:
-						if self.line_of_sight(self.player.x, self.player.y, x, y):
+						if self.line_of_sight(self.player.x,self.player.y,x,y):
 							self.visible[y][x] = True
 							self.explored[y][x] = True
 
 	def line_of_sight(self, x1, y1, x2, y2):
 		# Bresenham
-		dx = abs(x2 - x1)
-		dy = abs(y2 - y1)
+		dx = abs(x2-x1)
+		dy = abs(y2-y1)
 		x = x1
 		y = y1
-		sx = 1 if x2 > x1 else -1
-		sy = 1 if y2 > y1 else -1
-		if dx > dy:
-			err = dx // 2
+		sx = 1 if x2>x1 else -1
+		sy = 1 if y2>y1 else -1
+		if dx>dy:
+			err = dx//2
 			while x != x2:
 				if self.map[y][x] == WALL and (x,y) != (x1,y1) and (x,y) != (x2,y2):
 					return False
@@ -226,7 +230,7 @@ class Game:
 					err += dx
 				x += sx
 		else:
-			err = dy // 2
+			err = dy//2
 			while y != y2:
 				if self.map[y][x] == WALL and (x,y) != (x1,y1) and (x,y) != (x2,y2):
 					return False
@@ -239,7 +243,6 @@ class Game:
 
 	def draw(self):
 		self.stdscr.clear()
-		# map
 		for y in range(MAP_H):
 			for x in range(MAP_W):
 				ch = UNKNOWN
@@ -268,7 +271,6 @@ class Game:
 								ch = e.ch
 								attr = curses.color_pair(CP_ENEMY)
 				elif self.explored[y][x]:
-					# dimmed explored
 					if self.map[y][x] == WALL:
 						ch = WALL
 					else:
@@ -277,15 +279,32 @@ class Game:
 					self.stdscr.addch(y, x, ord(ch), attr)
 				except curses.error:
 					pass
+
 		# UI panel
-		status = f"HP:{self.player.hp}  LV:{self.level}  Enemies:{len(self.enemies)}  Equipped:{self.inventory[self.equipped].name if (self.equipped is not None and self.equipped < len(self.inventory)) else 'None'}  {self.message}"
+		status = f"HP:{self.player.hp}/{self.player.max_hp}  LV:{self.level}  Enemies:{len(self.enemies)}  Equipped:{self.inventory[self.equipped].name if (self.equipped is not None and self.equipped < len(self.inventory)) else 'None'}"
 		try:
-			self.stdscr.addstr(MAP_H, 0, status[:MAP_W-1], curses.color_pair(CP_TEXT))
-			controls = "Controls: arrows/WASD to move, g wait, i inventory, e equip/cycle, q quit"
-			self.stdscr.addstr(MAP_H+1, 0, controls[:MAP_W-1], curses.color_pair(CP_TEXT))
+			self.stdscr.addstr(MAP_H, 0, ("-"*MAP_W)[:MAP_W-1], curses.color_pair(CP_TEXT))
+			self.stdscr.addstr(MAP_H+1, 0, status[:MAP_W-1], curses.color_pair(CP_TEXT))
+			self.stdscr.addstr(MAP_H+2, 0, f"MSG: {self.message}"[:MAP_W-1], curses.color_pair(CP_TEXT))
+			self.stdscr.addstr(MAP_H+3, 0, f"LAST_COMBAT: {self.last_combat}"[:MAP_W-1], curses.color_pair(CP_TEXT))
+			self.stdscr.addstr(MAP_H+4, 0, "Controls: arrows/WASD to move, g wait, i inventory, e equip/cycle, q quit"[:MAP_W-1], curses.color_pair(CP_TEXT))
 			self.stdscr.refresh()
 		except curses.error:
 			pass
+
+	def popup_level(self, text, seconds=1.2):
+		h = 5
+		w = min(MAP_W-4, 40)
+		sy = MAP_H//2 - h//2
+		sx = MAP_W//2 - w//2
+		win = curses.newwin(h, w, sy, sx)
+		win.bkgd(' ', curses.color_pair(CP_POPUP))
+		win.border()
+		win.addstr(2, max(1,(w//2 - len(text)//2)), text)
+		win.refresh()
+		time.sleep(seconds)
+		win.erase()
+		del win
 
 	def handle_keys(self):
 		k = self.stdscr.getch()
@@ -316,37 +335,52 @@ class Game:
 		for it in list(self.items):
 			if it.x == x and it.y == y:
 				if it.kind == 'potion':
-					self.player.hp += it.bonus
+					self.player.hp = min(self.player.max_hp, self.player.hp + it.bonus)
 					self.message = f"You drink a potion and heal {it.bonus} HP."
 					self.items.remove(it)
 					return True
 				elif it.kind == 'sword':
-					# pick up sword into inventory
 					self.inventory.append(it)
 					self.items.remove(it)
 					self.message = f"You pick up {it.name}. Press 'e' to equip."
 					return True
 				elif it.kind == 'power':
-					# apply permanent bonuses spread evenly
-					name = it.name
-					kind = it.ch
-					# map symbol to effect
 					if it.ch == POWER_SYMBOLS['atk']:
 						self.player.atk += 1
-						self.message = f"{name} found — Attack +1 permanently."
+						self.message = f"{it.name} found — Attack +1 permanently."
 					elif it.ch == POWER_SYMBOLS['hp']:
-						self.player.hp += 3
-						self.message = f"{name} found — Max HP +3 (healed)."
+						self.player.max_hp += 3
+						self.player.hp = min(self.player.max_hp, self.player.hp + 3)
+						self.message = f"{it.name} found — Max HP +3 (healed)."
 					elif it.ch == POWER_SYMBOLS['def']:
 						self.player.defn += 1
-						self.message = f"{name} found — Defence +1 permanently."
+						self.message = f"{it.name} found — Defence +1 permanently."
 					elif it.ch == POWER_SYMBOLS['spd']:
-						# speed gives a small temporary heal and message
-						self.player.hp += 2
-						self.message = f"{name} found — You feel swift! (+2 HP)"
+						self.player.hp = min(self.player.max_hp, self.player.hp + 2)
+						self.message = f"{it.name} found — You feel swift! (+2 HP)"
 					self.items.remove(it)
 					return True
 		return False
+
+	def perform_attack(self, attacker, defender):
+		# hit chance and damage, returns (damage, crit, hit_chance)
+		hit_chance = 75 + (attacker.atk - defender.defn) * 5
+		hit_chance = max(25, min(95, hit_chance))
+		roll = random.randint(1,100)
+		if roll > hit_chance:
+			return (0, False, hit_chance)
+		dmg = random.randint(1,4) + max(0, attacker.atk-1)
+		# equipment bonus
+		if attacker is self.player and self.equipped is not None and self.equipped < len(self.inventory):
+			it = self.inventory[self.equipped]
+			if it.kind == 'sword':
+				dmg += it.bonus
+		crit = random.random() < 0.07
+		if crit:
+			dmg = int(dmg*1.8)+1
+		actual = max(0, dmg - defender.defn)
+		defender.hp -= actual
+		return (actual, crit, hit_chance)
 
 	def move_player(self, dx, dy):
 		nx = self.player.x + dx
@@ -364,67 +398,61 @@ class Game:
 				target = e
 				break
 		if target:
-			# attack (classic bump-to-attack)
-			dmg = random.randint(1,3) + self.player.atk
-			# weapon bonus if equipped
-			if self.equipped is not None and self.equipped < len(self.inventory):
-				itm = self.inventory[self.equipped]
-				if itm.kind == 'sword':
-					dmg += itm.bonus
-			# enemy defence reduces damage
-			actual = max(0, dmg - target.defn)
-			target.hp -= actual
-			self.message = f"You hit {target.name} for {actual}!"
-			if target.hp <= 0:
-				self.enemies.remove(target)
-				self.message = f"You slay the {target.name}!"
+			dmg, crit, chance = self.perform_attack(self.player, target)
+			if dmg == 0:
+				self.message = f"You miss the {target.name} ({chance}%)."
+				self.last_combat = f"Missed (chance {chance}%)."
+			else:
+				desc = f"You hit {target.name} for {dmg}{' (CRIT)' if crit else ''}."
+				self.message = desc
+				self.last_combat = desc
+				if target.hp <= 0:
+					self.enemies.remove(target)
+					self.message = f"You slay the {target.name}!"
+					self.last_combat = f"Slain: {target.name}."
 			return
-		# check items
+		# items
 		if self.pickup_item_at(nx, ny):
-			# player moves onto item tile if not potion
-			if any(it.x == nx and it.y == ny for it in self.items):
-				self.player.x = nx
-				self.player.y = ny
+			self.player.x = nx
+			self.player.y = ny
 			return
-		# check stairs
+		# stairs
 		if self.stairs.x == nx and self.stairs.y == ny:
 			self.level_up()
 			return
-		# empty floor
+		# move
 		self.player.x = nx
 		self.player.y = ny
 		self.message = "You move."
 
 	def enemy_turns(self):
 		for e in list(self.enemies):
-			# simple AI: move toward player if visible, else wander
 			if abs(e.x - self.player.x) <= self.fov_radius and abs(e.y - self.player.y) <= self.fov_radius:
-				if self.visible[e.y][e.x] and self.line_of_sight(e.x, e.y, self.player.x, self.player.y):
+				if self.visible[e.y][e.x] and self.line_of_sight(e.x,e.y,self.player.x,self.player.y):
+					dmg, crit, chance = self.perform_attack(e, self.player)
+					if dmg == 0:
+						self.message = f"The {e.name} misses you ({chance}%)."
+						self.last_combat = f"Enemy missed ({chance}%)."
+					else:
+						desc = f"{e.name} hits you for {dmg}{' (CRIT)' if crit else ''}."
+						self.message = desc
+						self.last_combat = desc
+						if self.player.hp <= 0:
+							self.game_over("You were slain.")
+					# attempt move towards player if not adjacent
 					dx = 1 if self.player.x > e.x else -1 if self.player.x < e.x else 0
 					dy = 1 if self.player.y > e.y else -1 if self.player.y < e.y else 0
 					nx = e.x + dx
 					ny = e.y + dy
-					# attack if on player
-					if nx == self.player.x and ny == self.player.y:
-						damage = random.randint(1,3) + (e.atk if hasattr(e, 'atk') else 1)
-						# defence reduces
-						actual = max(0, damage - self.player.defn)
-						self.player.hp -= actual
-						self.message = f"A {e.name} hits you for {actual}!"
-						if self.player.hp <= 0:
-							self.game_over("You were slain.")
-							return
-					elif not self.is_blocked(nx, ny):
+					if not (nx == self.player.x and ny == self.player.y) and not self.is_blocked(nx, ny):
 						e.x = nx
 						e.y = ny
 			else:
-				# random move
-				if random.random() < 0.25:
+				if random.random() < 0.2:
 					dx, dy = random.choice([(1,0),(-1,0),(0,1),(0,-1),(0,0)])
 					nx = e.x + dx
 					ny = e.y + dy
-					if (0 <= nx < MAP_W and 0 <= ny < MAP_H and
-						self.map[ny][nx] != WALL and not self.is_blocked(nx, ny)):
+					if (0 <= nx < MAP_W and 0 <= ny < MAP_H and self.map[ny][nx] != WALL and not self.is_blocked(nx, ny)):
 						e.x = nx
 						e.y = ny
 
@@ -440,9 +468,10 @@ class Game:
 
 	def level_up(self):
 		self.level += 1
-		self.player.hp = min(50, self.player.hp + 8)
+		self.player.hp = min(100, self.player.hp + 8)
+		self.player.max_hp = min(100, getattr(self.player,'max_hp',24) + 5)
 		self.message = "You descend deeper... the dungeon reshapes!"
-		# regenerate map with stronger enemies
+		self.popup_level(f"Entering Floor {self.level}")
 		self.map = [[WALL for _ in range(MAP_W)] for _ in range(MAP_H)]
 		self.rooms = []
 		self.enemies = []
@@ -453,28 +482,56 @@ class Game:
 			e.hp += self.level // 2
 
 	def show_inventory(self):
-		# simple inventory display; press any key to close
-		h = 10
-		w = 40
+		# interactive inventory - select item by number then pick action
+		h = 14
+		w = 60
 		sy = max(0, MAP_H//2 - h//2)
 		sx = max(0, MAP_W//2 - w//2)
 		win = curses.newwin(h, w, sy, sx)
-		win.border()
-		win.addstr(0, 2, " Inventory ")
-		if not self.inventory:
-			win.addstr(2, 2, "(empty)")
-		else:
-			for i, it in enumerate(self.inventory):
-				mark = '*' if self.equipped == i else ' '
-				win.addstr(2+i, 2, f"{mark} [{i}] {it.name} ({it.kind})")
-		win.addstr(h-2, 2, "Press number to equip, any other key to close.")
-		win.refresh()
-		c = win.getch()
-		if c >= ord('0') and c <= ord('9'):
-			n = c - ord('0')
-			if n < len(self.inventory):
-				self.equipped = n
-				self.message = f"Equipped {self.inventory[n].name}."
+		win.keypad(True)
+		while True:
+			win.erase()
+			win.border()
+			win.addstr(0, 2, " Inventory ")
+			if not self.inventory:
+				win.addstr(2, 2, "(empty)")
+			else:
+				for i, it in enumerate(self.inventory):
+					mark = '*' if self.equipped == i else ' '
+					win.addstr(2+i, 2, f"{mark} [{i}] {it.name} ({it.kind})")
+			win.addstr(h-4, 2, "Commands: number=select item, q=close")
+			win.addstr(h-3, 2, "After selecting: e=Equip, u=Use (potions), d=Drop, x=Examine")
+			win.refresh()
+			c = win.getch()
+			if c == ord('q'):
+				break
+			if ord('0') <= c <= ord('9'):
+				n = c - ord('0')
+				if n < len(self.inventory):
+					sel = self.inventory[n]
+					win.addstr(h-6, 2, f"Selected {sel.name}. Press e/u/d/x:")
+					win.refresh()
+					a = win.getch()
+					if a in (ord('e'), ord('E')):
+						self.equipped = n
+						self.message = f"Equipped {sel.name}."
+						break
+					if a in (ord('u'), ord('U')) and sel.kind == 'potion':
+						self.player.hp = min(self.player.max_hp, self.player.hp + sel.bonus)
+						self.message = f"Used {sel.name}, healed {sel.bonus}."
+						self.inventory.pop(n)
+						break
+					if a in (ord('d'), ord('D')):
+						sel.x = self.player.x
+						sel.y = self.player.y
+						self.items.append(sel)
+						self.inventory.pop(n)
+						self.message = f"Dropped {sel.name}."
+						break
+					if a in (ord('x'), ord('X')):
+						win.addstr(h-2, 2, f"{sel.name}: kind={sel.kind}, bonus={sel.bonus}")
+						win.getch()
+						break
 		win.erase()
 		del win
 
@@ -490,6 +547,7 @@ class Game:
 
 	def main_loop(self):
 		self.stdscr.nodelay(False)
+		self.popup_level(f"Entering Floor {self.level}")
 		while True:
 			self.recompute_fov()
 			self.draw()
@@ -503,37 +561,42 @@ class Game:
 				self.message = "You wait..."
 			else:
 				self.move_player(dxdy[0], dxdy[1])
-			# enemies move
 			self.enemy_turns()
-			# check win
 			if self.player.x == self.stairs.x and self.player.y == self.stairs.y:
 				self.level_up()
-			# check alive
 			if self.player.hp <= 0:
 				self.game_over("You died.")
 
 def init_colors():
-	# init colours and pairs
 	if not curses.has_colors():
 		return
 	curses.start_color()
 	curses.use_default_colors()
 	curses.init_pair(CP_PLAYER, curses.COLOR_YELLOW, -1)
 	curses.init_pair(CP_WALL, curses.COLOR_WHITE, -1)
-	curses.init_pair(CP_FLOOR, curses.COLOR_BLACK, -1)
+	curses.init_pair(CP_FLOOR, curses.COLOR_WHITE, -1)
 	curses.init_pair(CP_ENEMY, curses.COLOR_GREEN, -1)
 	curses.init_pair(CP_POTION, curses.COLOR_RED, -1)
 	curses.init_pair(CP_STAIRS, curses.COLOR_CYAN, -1)
 	curses.init_pair(CP_SWORD, curses.COLOR_MAGENTA, -1)
 	curses.init_pair(CP_POWER, curses.COLOR_BLUE, -1)
 	curses.init_pair(CP_TEXT, curses.COLOR_WHITE, -1)
+	curses.init_pair(CP_POPUP, curses.COLOR_BLACK, curses.COLOR_YELLOW)
 
 def main(stdscr):
-	# curses setup
 	curses.curs_set(0)
 	stdscr.keypad(True)
 	stdscr.timeout(100)
 	init_colors()
+	# check terminal size
+	h, w = stdscr.getmaxyx()
+	if h < MAP_H + 6 or w < MAP_W:
+		stdscr.clear()
+		msg = f"Terminal too small: need at least {MAP_W}x{MAP_H+6}. Resize and try again."
+		stdscr.addstr(max(0,h//2), max(0,w//2 - len(msg)//2), msg)
+		stdscr.refresh()
+		stdscr.getch()
+		return
 	game = Game(stdscr)
 	game.main_loop()
 
